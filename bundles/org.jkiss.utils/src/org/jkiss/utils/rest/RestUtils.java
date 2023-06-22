@@ -23,10 +23,16 @@ import org.jkiss.code.NotNull;
 import org.jkiss.utils.BeanUtils;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.Proxy;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 public class RestUtils {
     private static final Gson gson = new GsonBuilder()
@@ -41,7 +47,18 @@ public class RestUtils {
 
     @NotNull
     public static <T> T createClient(@NotNull URI uri, @NotNull Class<T> cls) {
-        return RestClient.connect(uri, cls, gson);
+        return createClient(uri, cls, gson);
+    }
+
+    @NotNull
+    public static <T> T createClient(@NotNull URI uri, @NotNull Class<T> cls, @NotNull Gson gson) {
+        final Object proxy = Proxy.newProxyInstance(
+            cls.getClassLoader(),
+            new Class[]{cls},
+            new ClientProxy(uri, gson)
+        );
+
+        return cls.cast(proxy);
     }
 
     @NotNull
@@ -83,6 +100,41 @@ public class RestUtils {
         @NotNull
         public JsonElement[] getArguments() {
             return args;
+        }
+    }
+
+    private static class ClientProxy implements InvocationHandler {
+        private final URI uri;
+        private final Gson gson;
+        private final HttpClient client;
+
+        private ClientProxy(@NotNull URI uri, @NotNull Gson gson) {
+            this.uri = uri;
+            this.gson = gson;
+            this.client = HttpClient.newHttpClient();
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getDeclaringClass() == Object.class) {
+                return BeanUtils.handleObjectMethod(proxy, method, args);
+            }
+
+            final MethodInvokeRequest request = MethodInvokeRequest.of(method, args, gson);
+
+            final HttpResponse<?> response = client.send(
+                HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(request)))
+                    .build(),
+                info -> HttpResponse.BodySubscribers.mapping(
+                    HttpResponse.BodySubscribers.ofInputStream(),
+                    is -> gson.fromJson(new InputStreamReader(is), method.getReturnType())
+                )
+            );
+
+            return response.body();
         }
     }
 }
