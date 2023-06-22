@@ -25,11 +25,33 @@ import java.lang.invoke.MethodType;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * BeanUtils
  */
 public class BeanUtils {
+    private static final Map<Class<?>, String> PRIMITIVE_CLASS_TO_DESCRIPTOR = Map.of(
+        byte.class, "B",
+        short.class, "S",
+        int.class, "I",
+        long.class, "J",
+        double.class, "D",
+        float.class, "F",
+        char.class, "C",
+        boolean.class, "Z"
+    );
+
+    private static final Map<String, Class<?>> PRIMITIVE_DESCRIPTOR_TO_CLASS = Map.of(
+        "B", byte.class,
+        "S", short.class,
+        "I", int.class,
+        "J", long.class,
+        "D", double.class,
+        "F", float.class,
+        "C", char.class,
+        "Z", boolean.class
+    );
 
     public static boolean isGetterName(String name) {
         return name.startsWith("get") || name.startsWith("is") || name.startsWith("has");
@@ -429,6 +451,73 @@ public class BeanUtils {
             field.setAccessible(true);
         }
         return (T) field.get(object);
+    }
+
+    @Nullable
+    public static Object handleObjectMethod(@NotNull Object proxy, @NotNull Method method, Object[] args) {
+        switch (method.getName()) {
+            case "toString":
+                return "Proxy";
+            case "hashCode":
+                return System.identityHashCode(proxy);
+            case "equals":
+                return proxy == args[0];
+            default:
+                return null;
+        }
+    }
+
+    @NotNull
+    public static String getSignature(@NotNull Method method) {
+        final String params = Arrays
+            .stream(method.getParameters())
+            .map(Parameter::getType)
+            .map(BeanUtils::getSignature)
+            .collect(Collectors.joining());
+        return method.getName() + '(' + params + ')';
+    }
+
+    @NotNull
+    public static String getSignature(@NotNull Class<?> type) {
+        if (type.isPrimitive()) {
+            return PRIMITIVE_CLASS_TO_DESCRIPTOR.get(type);
+        } else if (type.isArray()) {
+            return '[' + getSignature(type.getComponentType());
+        } else {
+            return 'L' + type.getName().replace('.', '/') + ';';
+        }
+    }
+
+    @NotNull
+    public static Method getMethod(@NotNull Class<?> cls, @NotNull String signature) throws Exception {
+        final int index = signature.indexOf('(');
+        final String name = signature.substring(0, index);
+        final String args = signature.substring(index + 1, signature.indexOf(')'));
+        final List<Class<?>> types = new ArrayList<>();
+
+        for (int i = 0; i < args.length(); ) {
+            final Pair<Class<?>, Integer> result = extractType(args, i);
+            types.add(result.getFirst());
+            i += result.getSecond();
+        }
+
+        return cls.getMethod(name, types.toArray(Class[]::new));
+    }
+
+    @NotNull
+    private static Pair<Class<?>, Integer> extractType(@NotNull String string, int index) throws Exception {
+        final char ch = string.charAt(index);
+
+        if (ch == 'L') {
+            final int last = string.indexOf(';');
+            final Class<?> type = Class.forName(string.substring(index + 1, last).replace('/', '.'));
+            return new Pair<>(type, last - index + 1);
+        } else if (ch == '[') {
+            final Pair<Class<?>, Integer> type = extractType(string, index + 1);
+            return new Pair<>(Array.newInstance(type.getFirst(), 0).getClass(), type.getSecond() + 1);
+        } else {
+            return new Pair<>(PRIMITIVE_DESCRIPTOR_TO_CLASS.get(String.valueOf(ch)), 1);
+        }
     }
 
     @NotNull

@@ -11,5 +11,6 @@ Export-Package: org.jkiss.code,
  org.jkiss.utils.io,
  org.jkiss.utils.time,
  org.jkiss.utils.xml
+Require-Bundle: com.google.gson
 Bundle-Vendor: %Bundle-Vendor
 Automatic-Module-Name: org.jkiss.utils
